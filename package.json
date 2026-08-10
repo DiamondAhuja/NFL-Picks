@@ -1,0 +1,24 @@
+{
+  "name": "nfl-picks",
+  "version": "1.0.0",
+  "description": "Predicting winners of every NFL game",
+  "main": "index.js",
+  "scripts": {
+    "start": "concurrently \"cd backend && npm run start\" \"cd frontend && npm run dev\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DiamondAhuja/NFL-Picks.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/DiamondAhuja/NFL-Picks/issues"
+  },
+  "homepage": "https://github.com/DiamondAhuja/NFL-Picks#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
+}
