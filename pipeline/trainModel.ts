@@ -79,7 +79,7 @@ export function trainAndPredict() {
   
   // Join games and features to get training data
   const rows = db.prepare(`
-    SELECT g.id, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.completed,
+    SELECT g.id, g.home_team_id, g.away_team_id, g.home_score, g.away_score, g.completed, g.game_type,
            fh.elo_rating as home_elo, fh.rolling_points_scored as home_pts, fh.rolling_points_allowed as home_allow, fh.win_streak as home_streak,
            fa.elo_rating as away_elo, fa.rolling_points_scored as away_pts, fa.rolling_points_allowed as away_allow, fa.win_streak as away_streak
     FROM games g
@@ -87,8 +87,10 @@ export function trainAndPredict() {
     JOIN features fa ON g.id = fa.game_id AND fa.team_id = g.away_team_id
   `).all() as any[];
 
-  const trainData = rows.filter(r => r.completed && r.home_score !== null && r.away_score !== null);
-  const predictData = rows.filter(r => !r.completed || r.home_score === null);
+  // Train only on completed, non-preseason games
+  const trainData = rows.filter(r => r.completed && r.home_score !== null && r.away_score !== null && r.game_type !== 'PRE');
+  // Predict for all games so we have historical predictions to compare against actual results
+  const predictData = rows;
 
   const extractFeatures = (r: any) => [
     r.home_elo - r.away_elo,
@@ -141,8 +143,8 @@ export function trainAndPredict() {
   console.log('Generating predictions for ' + predictData.length + ' upcoming games...');
   
   const insertPred = db.prepare(`
-    INSERT OR REPLACE INTO predictions (game_id, model_version_id, timestamp, home_win_prob, away_win_prob, predicted_home_score, predicted_away_score, confidence_level, explanation_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO predictions (game_id, model_version_id, timestamp, home_win_prob, away_win_prob, predicted_home_score, predicted_away_score, confidence_level, explanation_json, is_correct)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let count = 0;
@@ -173,6 +175,14 @@ export function trainAndPredict() {
       });
       explanations.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
 
+      // Grade prediction if game is completed
+      let isCorrect = null;
+      if (r.completed && r.home_score !== null && r.away_score !== null) {
+        const homeWon = r.home_score > r.away_score;
+        const predictedHomeWin = homeProb > 0.5;
+        isCorrect = (homeWon === predictedHomeWin) ? 1 : 0;
+      }
+
       insertPred.run(
         r.id,
         modelId,
@@ -182,7 +192,8 @@ export function trainAndPredict() {
         homeScorePred,
         awayScorePred,
         confidence,
-        JSON.stringify(explanations.slice(0, 3))
+        JSON.stringify(explanations.slice(0, 3)),
+        isCorrect
       );
       count++;
     }

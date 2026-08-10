@@ -1,1 +1,6 @@
 @import "tailwindcss";
+
+@theme {
+  --color-nfl-blue: #013369;
+  --color-nfl-red: #D50A0A;
+}

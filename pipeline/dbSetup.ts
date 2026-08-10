@@ -24,6 +24,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS games (
     id TEXT PRIMARY KEY,
     season INTEGER NOT NULL,
+    game_type TEXT NOT NULL,
     week INTEGER NOT NULL,
     game_date TEXT NOT NULL,
     home_team_id TEXT NOT NULL,
@@ -88,6 +89,7 @@ db.exec(`
     predicted_away_score INTEGER,
     confidence_level TEXT,
     explanation_json TEXT,
+    is_correct BOOLEAN,
     PRIMARY KEY (game_id, model_version_id),
     FOREIGN KEY (game_id) REFERENCES games (id),
     FOREIGN KEY (model_version_id) REFERENCES model_versions (id)

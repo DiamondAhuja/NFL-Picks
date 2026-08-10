@@ -23,7 +23,7 @@ export function runFeatureEngineering() {
   `);
 
   const games = db.prepare(`
-    SELECT id, season, week, home_team_id, away_team_id, home_score, away_score, completed 
+    SELECT id, season, week, game_type, home_team_id, away_team_id, home_score, away_score, completed 
     FROM games 
     ORDER BY season ASC, week ASC
   `).all();
@@ -74,8 +74,8 @@ export function runFeatureEngineering() {
         count += 2;
       }
 
-      // Update state if game is completed
-      if (game.completed && game.home_score != null && game.away_score != null) {
+      // Update state if game is completed and it's NOT a preseason game
+      if (game.completed && game.home_score != null && game.away_score != null && game.game_type !== 'PRE') {
         const homeWon = game.home_score > game.away_score;
         const awayWon = game.away_score > game.home_score;
         const isTie = game.home_score === game.away_score;

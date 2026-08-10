@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import Database from 'better-sqlite3';
 import path from 'path';
+import { startUpdater } from './updater';
 
 const app = express();
 app.use(cors());
@@ -13,17 +14,41 @@ const db = new Database(dbPath, { readonly: true });
 // Upcoming games with predictions
 app.get('/api/games/upcoming', (req, res) => {
   const games = db.prepare(`
-    SELECT g.id, g.season, g.week, g.game_date,
+    SELECT g.id, g.season, g.week, g.game_type, g.game_date,
            ht.name as home_team, ht.logo_url as home_logo, ht.id as home_team_id,
            at.name as away_team, at.logo_url as away_logo, at.id as away_team_id,
            p.home_win_prob, p.away_win_prob, p.predicted_home_score, p.predicted_away_score, p.confidence_level
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
-    LEFT JOIN predictions p ON g.id = p.game_id
+    LEFT JOIN (
+      SELECT * FROM predictions 
+      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+    ) p ON g.id = p.game_id
     WHERE g.completed = 0
     ORDER BY g.season ASC, g.week ASC, g.game_date ASC
     LIMIT 50
+  `).all();
+  res.json(games);
+});
+
+// Past games results and predictions
+app.get('/api/games/past', (req, res) => {
+  const games = db.prepare(`
+    SELECT g.id, g.season, g.week, g.game_type, g.game_date, g.home_score, g.away_score,
+           ht.name as home_team, ht.logo_url as home_logo,
+           at.name as away_team, at.logo_url as away_logo,
+           p.predicted_home_score, p.predicted_away_score, p.is_correct
+    FROM games g
+    JOIN teams ht ON g.home_team_id = ht.id
+    JOIN teams at ON g.away_team_id = at.id
+    LEFT JOIN (
+      SELECT * FROM predictions 
+      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+    ) p ON g.id = p.game_id
+    WHERE g.completed = 1 AND g.season >= 2026
+    ORDER BY g.season DESC, g.game_date DESC
+    LIMIT 100
   `).all();
   res.json(games);
 });
@@ -41,7 +66,10 @@ app.get('/api/games/:id', (req, res) => {
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
-    LEFT JOIN predictions p ON g.id = p.game_id
+    LEFT JOIN (
+      SELECT * FROM predictions 
+      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+    ) p ON g.id = p.game_id
     LEFT JOIN features fh ON g.id = fh.game_id AND fh.team_id = g.home_team_id
     LEFT JOIN features fa ON g.id = fa.game_id AND fa.team_id = g.away_team_id
     WHERE g.id = ?
@@ -62,4 +90,5 @@ app.get('/api/performance', (req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log('Backend API running on port ' + PORT);
+  startUpdater();
 });
