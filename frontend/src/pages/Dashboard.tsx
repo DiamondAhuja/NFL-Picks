@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, CheckCircle, XCircle } from 'lucide-react';
+import { CalendarDays, ChevronRight, CheckCircle, MapPin, XCircle } from 'lucide-react';
 
 export default function Dashboard() {
   const [upcomingGames, setUpcomingGames] = useState<any[]>([]);
   const [pastGames, setPastGames] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'upcoming-pre' | 'upcoming-reg' | 'past'>('upcoming-pre');
+  const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
 
   useEffect(() => {
     setLoading(true);
@@ -25,32 +25,37 @@ export default function Dashboard() {
 
   if (loading) return <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nfl-blue"></div></div>;
 
-  const gamesToDisplay = activeTab === 'upcoming-pre' 
-    ? upcomingGames.filter(g => g.game_type === 'PRE')
-    : activeTab === 'upcoming-reg'
-    ? upcomingGames.filter(g => g.game_type !== 'PRE')
-    : pastGames;
+  const gamesToDisplay = activeTab === 'upcoming' ? upcomingGames : pastGames;
+  const formatKickoff = (game: any) => [game.weekday, game.game_date, game.gametime].filter(Boolean).join(' ');
+  const gameTypeLabel = (gameType: string) => {
+    if (gameType === 'REG') return 'Regular';
+    if (gameType === 'WC') return 'Wild Card';
+    if (gameType === 'DIV') return 'Divisional';
+    if (gameType === 'CON') return 'Conference';
+    if (gameType === 'SB') return 'Super Bowl';
+    return gameType;
+  };
+  const projectedMargin = (game: any) => {
+    if (game.predicted_home_score == null || game.predicted_away_score == null) return null;
+    const margin = game.predicted_home_score - game.predicted_away_score;
+    if (margin === 0) return 'Projected tie';
+    return `${margin > 0 ? game.home_team : game.away_team} by ${Math.abs(margin)}`;
+  };
 
   return (
     <div>
       <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 mb-2">NFL Predictions</h1>
-          <p className="text-gray-600">AI-powered predictions for the 2026 season.</p>
+          <p className="text-gray-600">Regular season and playoff predictions powered by live NFLverse updates.</p>
         </div>
         
         <div className="mt-4 md:mt-0 flex bg-gray-100 p-1 rounded-lg">
           <button 
-            onClick={() => setActiveTab('upcoming-pre')}
-            className={'px-4 py-2 text-sm font-medium rounded-md transition-colors ' + (activeTab === 'upcoming-pre' ? 'bg-white shadow-sm text-nfl-blue' : 'text-gray-600 hover:text-gray-900')}
+            onClick={() => setActiveTab('upcoming')}
+            className={'px-4 py-2 text-sm font-medium rounded-md transition-colors ' + (activeTab === 'upcoming' ? 'bg-white shadow-sm text-nfl-blue' : 'text-gray-600 hover:text-gray-900')}
           >
-            Preseason
-          </button>
-          <button 
-            onClick={() => setActiveTab('upcoming-reg')}
-            className={'px-4 py-2 text-sm font-medium rounded-md transition-colors ' + (activeTab === 'upcoming-reg' ? 'bg-white shadow-sm text-nfl-blue' : 'text-gray-600 hover:text-gray-900')}
-          >
-            Regular Season
+            Upcoming
           </button>
           <button 
             onClick={() => setActiveTab('past')}
@@ -67,7 +72,7 @@ export default function Dashboard() {
         )}
         
         {gamesToDisplay.map(game => (
-          <Link key={game.id} to={'/game/' + game.id} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group relative">
+          <Link key={game.id} to={'/game/' + game.id} className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group relative">
             
             {activeTab === 'past' && game.is_correct !== null && (
               <div className={'absolute top-0 right-0 px-3 py-1 text-xs font-bold rounded-bl-lg text-white ' + (game.is_correct ? 'bg-green-500' : 'bg-red-500')}>
@@ -78,13 +83,13 @@ export default function Dashboard() {
             <div className="p-6 pt-8">
               <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center space-x-2">
-                  <span className={'text-xs font-bold px-2 py-1 rounded ' + (game.game_type === 'PRE' ? 'bg-purple-100 text-purple-800' : game.game_type === 'POST' ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-800')}>
-                    {game.game_type === 'PRE' ? 'Preseason' : game.game_type === 'POST' ? 'Playoffs' : 'Regular'}
+                  <span className={'text-xs font-bold px-2 py-1 rounded ' + (game.game_type === 'REG' ? 'bg-gray-100 text-gray-800' : 'bg-orange-100 text-orange-800')}>
+                    {gameTypeLabel(game.game_type)}
                   </span>
                   <span className="text-sm font-medium text-gray-500 uppercase tracking-wider">Week {game.week}</span>
                 </div>
                 
-                {(activeTab === 'upcoming-reg' || activeTab === 'upcoming-pre') && game.confidence_level && (
+                {activeTab === 'upcoming' && game.confidence_level && (
                   <span className={'text-xs font-bold px-2 py-1 rounded ' + (
                     game.confidence_level === 'Very High' ? 'bg-green-100 text-green-800' :
                     game.confidence_level === 'High' ? 'bg-blue-100 text-blue-800' :
@@ -101,7 +106,7 @@ export default function Dashboard() {
                   <img src={game.away_logo || 'https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nfl.png'} alt={game.away_team} className="w-16 h-16 mx-auto mb-2 object-contain" />
                   <div className="font-bold text-gray-900">{game.away_team}</div>
                   
-                  {(activeTab === 'upcoming-reg' || activeTab === 'upcoming-pre') ? (
+                  {activeTab === 'upcoming' ? (
                     <>
                       <div className="text-sm text-gray-500">{game.away_win_prob ? (game.away_win_prob * 100).toFixed(0) + '%' : 'N/A'}</div>
                       <div className="text-lg font-semibold text-gray-700 mt-1">{game.predicted_away_score}</div>
@@ -120,7 +125,7 @@ export default function Dashboard() {
                   <img src={game.home_logo || 'https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nfl.png'} alt={game.home_team} className="w-16 h-16 mx-auto mb-2 object-contain" />
                   <div className="font-bold text-gray-900">{game.home_team}</div>
                   
-                  {(activeTab === 'upcoming-reg' || activeTab === 'upcoming-pre') ? (
+                  {activeTab === 'upcoming' ? (
                     <>
                       <div className="text-sm text-gray-500">{game.home_win_prob ? (game.home_win_prob * 100).toFixed(0) + '%' : 'N/A'}</div>
                       <div className="text-lg font-semibold text-gray-700 mt-1">{game.predicted_home_score}</div>
@@ -132,6 +137,22 @@ export default function Dashboard() {
                     </>
                   )}
                 </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-2 text-sm text-gray-500">
+                <div className="flex items-center">
+                  <CalendarDays className="w-4 h-4 mr-2 text-gray-400" />
+                  <span>{formatKickoff(game) || 'Kickoff TBD'}</span>
+                </div>
+                {game.stadium && (
+                  <div className="flex items-center">
+                    <MapPin className="w-4 h-4 mr-2 text-gray-400" />
+                    <span>{game.stadium}</span>
+                  </div>
+                )}
+                {activeTab === 'upcoming' && projectedMargin(game) && (
+                  <div className="font-semibold text-gray-700">{projectedMargin(game)}</div>
+                )}
               </div>
             </div>
             

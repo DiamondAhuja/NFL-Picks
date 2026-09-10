@@ -20,7 +20,7 @@ export default function Performance() {
     <div className="max-w-4xl mx-auto">
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Model Performance</h1>
-        <p className="text-gray-600">Historical backtesting results and accuracy metrics for the current model.</p>
+        <p className="text-gray-600">Chronological holdout results for the current regular season and playoff model.</p>
         <div className="mt-4 inline-flex items-center space-x-2 bg-blue-50 text-blue-800 px-4 py-2 rounded-full text-sm font-medium">
           <AlertCircle className="w-4 h-4" />
           <span>Active Model: {model?.version_string}</span>
@@ -52,10 +52,11 @@ export default function Performance() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
         <h3 className="text-xl font-bold mb-4">About the Metrics</h3>
         <ul className="space-y-4 text-gray-600">
-          <li><strong className="text-gray-900">Accuracy:</strong> The percentage of games where the model correctly predicted the winning team. Above 60-65% in the NFL is generally considered very strong given the parity of the league.</li>
+          <li><strong className="text-gray-900">Accuracy:</strong> The percentage of holdout games where the model correctly predicted the winning team. Above 60-65% in the NFL is generally considered very strong given the parity of the league.</li>
           <li><strong className="text-gray-900">Brier Score:</strong> Measures the accuracy of probabilistic predictions. A score of 0.0 means the model always predicts 100% win probability and is always correct. A score of 0.25 is equivalent to guessing 50/50 randomly.</li>
           <li><strong className="text-gray-900">Log Loss:</strong> Penalizes false confidence. If the model says a team has a 99% chance to win and they lose, the log loss penalty is very high.</li>
         </ul>
+        {model?.description && <p className="text-sm text-gray-500 mt-6">{model.description}</p>}
       </div>
     </div>
   );

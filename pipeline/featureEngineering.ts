@@ -6,6 +6,7 @@ const db = new Database(dbPath);
 
 const ELO_K = 20;
 const HOME_ADVANTAGE = 50;
+const OFFSEASON_REGRESSION = 0.35;
 
 function expectedResult(ratingA: number, ratingB: number): number {
   return 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
@@ -18,19 +19,27 @@ export function runFeatureEngineering() {
   db.exec('DELETE FROM features');
 
   const insertFeature = db.prepare(`
-    INSERT INTO features (game_id, team_id, is_home, rolling_points_scored, rolling_points_allowed, rolling_offensive_yards, rolling_turnovers, win_streak, elo_rating)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO features (
+      game_id, team_id, is_home, rolling_points_scored, rolling_points_allowed,
+      rolling_offensive_yards, rolling_turnovers, win_streak, elo_rating,
+      rest_days, season_win_pct, rolling_point_margin
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const games = db.prepare(`
-    SELECT id, season, week, game_type, home_team_id, away_team_id, home_score, away_score, completed 
+    SELECT id, season, week, game_type, game_date, home_team_id, away_team_id,
+           home_score, away_score, completed, home_rest, away_rest
     FROM games 
-    ORDER BY season ASC, week ASC
+    WHERE game_type != 'PRE'
+    ORDER BY season ASC, game_date ASC, week ASC
   `).all();
 
   // State trackers
   const teamElo: Record<string, number> = {};
   const teamHistory: Record<string, { pointsFor: number, pointsAgainst: number, won: boolean }[]> = {};
+  const seasonRecords: Record<string, { wins: number, losses: number, ties: number }> = {};
+  let currentSeason: number | null = null;
 
   const getRollingAvg = (teamId: string, key: 'pointsFor' | 'pointsAgainst', n = 5) => {
     const history = teamHistory[teamId] || [];
@@ -50,18 +59,47 @@ export function runFeatureEngineering() {
     return streak;
   };
 
+  const getRollingMargin = (teamId: string, n = 5) => {
+    const history = teamHistory[teamId] || [];
+    if (history.length === 0) return 0;
+    const recent = history.slice(-n);
+    const sum = recent.reduce((acc, curr) => acc + curr.pointsFor - curr.pointsAgainst, 0);
+    return sum / recent.length;
+  };
+
+  const getSeasonWinPct = (teamId: string) => {
+    const record = seasonRecords[teamId];
+    if (!record) return 0.5;
+    const gamesPlayed = record.wins + record.losses + record.ties;
+    if (gamesPlayed === 0) return 0.5;
+    return (record.wins + record.ties * 0.5) / gamesPlayed;
+  };
+
+  const ensureTeam = (teamId: string) => {
+    if (!teamElo[teamId]) teamElo[teamId] = 1500;
+    if (!teamHistory[teamId]) teamHistory[teamId] = [];
+    if (!seasonRecords[teamId]) seasonRecords[teamId] = { wins: 0, losses: 0, ties: 0 };
+  };
+
   let count = 0;
 
   db.transaction(() => {
     for (const game of games as any[]) {
+      if (currentSeason !== game.season) {
+        for (const teamId of Object.keys(teamElo)) {
+          teamElo[teamId] = 1500 + (teamElo[teamId] - 1500) * (1 - OFFSEASON_REGRESSION);
+        }
+        for (const teamId of Object.keys(seasonRecords)) {
+          seasonRecords[teamId] = { wins: 0, losses: 0, ties: 0 };
+        }
+        currentSeason = game.season;
+      }
+
       const homeId = game.home_team_id;
       const awayId = game.away_team_id;
 
-      // Initialize if not exists
-      if (!teamElo[homeId]) teamElo[homeId] = 1500;
-      if (!teamElo[awayId]) teamElo[awayId] = 1500;
-      if (!teamHistory[homeId]) teamHistory[homeId] = [];
-      if (!teamHistory[awayId]) teamHistory[awayId] = [];
+      ensureTeam(homeId);
+      ensureTeam(awayId);
 
       // Calculate pre-game features
       const homeElo = teamElo[homeId] + HOME_ADVANTAGE;
@@ -69,8 +107,8 @@ export function runFeatureEngineering() {
 
       // Insert pre-game features (only for games that have valid teams, some might be empty if bad data)
       if (homeId && awayId) {
-        insertFeature.run(game.id, homeId, 1, getRollingAvg(homeId, 'pointsFor'), getRollingAvg(homeId, 'pointsAgainst'), 350, 1.5, getWinStreak(homeId), teamElo[homeId]);
-        insertFeature.run(game.id, awayId, 0, getRollingAvg(awayId, 'pointsFor'), getRollingAvg(awayId, 'pointsAgainst'), 350, 1.5, getWinStreak(awayId), teamElo[awayId]);
+        insertFeature.run(game.id, homeId, 1, getRollingAvg(homeId, 'pointsFor'), getRollingAvg(homeId, 'pointsAgainst'), 350, 1.5, getWinStreak(homeId), teamElo[homeId], game.home_rest ?? 7, getSeasonWinPct(homeId), getRollingMargin(homeId));
+        insertFeature.run(game.id, awayId, 0, getRollingAvg(awayId, 'pointsFor'), getRollingAvg(awayId, 'pointsAgainst'), 350, 1.5, getWinStreak(awayId), teamElo[awayId], game.away_rest ?? 7, getSeasonWinPct(awayId), getRollingMargin(awayId));
         count += 2;
       }
 
@@ -95,6 +133,17 @@ export function runFeatureEngineering() {
 
         teamHistory[homeId].push({ pointsFor: game.home_score, pointsAgainst: game.away_score, won: homeWon });
         teamHistory[awayId].push({ pointsFor: game.away_score, pointsAgainst: game.home_score, won: awayWon });
+
+        if (isTie) {
+          seasonRecords[homeId].ties++;
+          seasonRecords[awayId].ties++;
+        } else if (homeWon) {
+          seasonRecords[homeId].wins++;
+          seasonRecords[awayId].losses++;
+        } else {
+          seasonRecords[awayId].wins++;
+          seasonRecords[homeId].losses++;
+        }
       }
     }
   })();

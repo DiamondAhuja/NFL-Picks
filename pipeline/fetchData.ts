@@ -1,8 +1,5 @@
-import axios from 'axios';
-import csvParser from 'csv-parser';
 import Database from 'better-sqlite3';
 import path from 'path';
-import fs from 'fs';
 
 const dbPath = path.resolve(__dirname, '../database.sqlite');
 const db = new Database(dbPath);
@@ -10,171 +7,183 @@ const db = new Database(dbPath);
 const TEAMS_URL = 'https://github.com/nflverse/nflverse-data/releases/download/teams/teams_colors_logos.csv';
 const GAMES_URL = 'https://github.com/nflverse/nfldata/raw/master/data/games.csv';
 
-const espnToNflverse: Record<string, string> = {
-  'LAR': 'LA',
-  'WSH': 'WAS'
-};
+const HISTORY_START_YEAR = 2018;
+const FUTURE_SEASONS_TO_KEEP = 1;
+
+function nullableText(value: unknown) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text === '' ? null : text;
+}
+
+function nullableNumber(value: unknown) {
+  const text = nullableText(value);
+  if (text == null) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableInteger(value: unknown) {
+  const parsed = nullableNumber(value);
+  return parsed == null ? null : Math.trunc(parsed);
+}
+
+function parseCsvLine(line: string) {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const next = line[i + 1];
+
+    if (char === '"' && inQuotes && next === '"') {
+      current += '"';
+      i++;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current);
+  return values;
+}
+
+async function fetchCsvRows(url: string) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+  }
+
+  const text = await response.text();
+  const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+  if (lines.length === 0) return [];
+
+  const headers = parseCsvLine(lines[0]).map(header => header.trim());
+  return lines.slice(1).map(line => {
+    const values = parseCsvLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      row[header] = values[index] ?? '';
+    });
+    return row;
+  });
+}
 
 async function fetchTeams() {
   console.log('Fetching teams...');
-  const response = await axios({ url: TEAMS_URL, responseType: 'stream' });
-  
+  const rows = await fetchCsvRows(TEAMS_URL);
+
   const insertTeam = db.prepare(`
-    INSERT OR REPLACE INTO teams (id, name, abbreviation, logo_url) 
+    INSERT OR REPLACE INTO teams (id, name, abbreviation, logo_url)
     VALUES (?, ?, ?, ?)
   `);
 
-  return new Promise<void>((resolve, reject) => {
-    db.transaction(() => {
-      response.data
-        .pipe(csvParser())
-        .on('data', (row: any) => {
-          if (row.team_abbr && row.team_name) {
-            insertTeam.run(
-              row.team_abbr, 
-              row.team_name, 
-              row.team_abbr, 
-              row.team_logo_espn || ''
-            );
-          }
-        })
-        .on('end', () => {
-          console.log('Teams inserted successfully.');
-          resolve();
-        })
-        .on('error', reject);
-    })();
-  });
+  db.transaction(() => {
+    for (const row of rows) {
+      if (row.team_abbr && row.team_name) {
+        insertTeam.run(
+          row.team_abbr,
+          row.team_name,
+          row.team_abbr,
+          row.team_logo_espn || ''
+        );
+      }
+    }
+  })();
+
+  console.log('Teams inserted successfully.');
 }
 
 async function fetchGames() {
   console.log('Fetching games...');
-  const response = await axios({ url: GAMES_URL, responseType: 'stream' });
-  
+  const rows = await fetchCsvRows(GAMES_URL);
+
   const insertGame = db.prepare(`
-    INSERT OR REPLACE INTO games (id, season, game_type, week, game_date, home_team_id, away_team_id, home_score, away_score, completed) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO games (
+      id, season, game_type, week, game_date, weekday, gametime,
+      home_team_id, away_team_id, home_score, away_score, completed,
+      location, stadium, roof, surface, temp, wind, away_rest, home_rest,
+      away_moneyline, home_moneyline, spread_line, total_line, div_game,
+      away_qb_name, home_qb_name, away_coach, home_coach
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Target seasons (e.g. 2023, 2024, 2025, 2026)
-  const targetSeasons = ['2023', '2024', '2025', '2026'];
+  const currentYear = new Date().getFullYear();
+  const latestSeason = currentYear + FUTURE_SEASONS_TO_KEEP;
 
-  return new Promise<void>((resolve, reject) => {
-    let count = 0;
-    const processRows = db.transaction((rows: any[]) => {
-      for (const row of rows) {
-        if (targetSeasons.includes(row.season)) {
-          const isCompleted = row.home_score !== '' && row.away_score !== '' && row.home_score != null;
-          
-          // Some old games don't have game_id in a friendly format, use game_id if present, else fallback
-          const gameId = row.game_id || `${row.season}_${row.week}_${row.away_team}_${row.home_team}`;
-          
-          insertGame.run(
-            gameId,
-            parseInt(row.season),
-            row.game_type || 'REG',
-            parseInt(row.week),
-            row.gameday || '',
-            row.home_team,
-            row.away_team,
-            isCompleted ? parseInt(row.home_score) : null,
-            isCompleted ? parseInt(row.away_score) : null,
-            isCompleted ? 1 : 0
-          );
-          count++;
-        }
-      }
-    });
-
-    const rowsBatch: any[] = [];
-    response.data
-      .pipe(csvParser())
-      .on('data', (row: any) => {
-        rowsBatch.push(row);
-        if (rowsBatch.length >= 100) {
-          processRows(rowsBatch);
-          rowsBatch.length = 0;
-        }
-      })
-      .on('end', () => {
-        if (rowsBatch.length > 0) {
-          processRows(rowsBatch);
-        }
-        console.log(`Games inserted successfully. Count: ${count}`);
-        resolve();
-      })
-      .on('error', reject);
-  });
-}
-
-async function fetchPreseasonGames() {
-  console.log('Fetching ESPN preseason games...');
-  const targetSeasons = ['2023', '2024', '2025', '2026'];
-  const insertGame = db.prepare(`
-    INSERT OR REPLACE INTO games (id, season, game_type, week, game_date, home_team_id, away_team_id, home_score, away_score, completed) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  db.transaction(() => {
+    db.prepare(`DELETE FROM predictions WHERE game_id IN (SELECT id FROM games WHERE game_type = ?)`).run('PRE');
+    db.prepare(`DELETE FROM features WHERE game_id IN (SELECT id FROM games WHERE game_type = ?)`).run('PRE');
+    db.prepare(`DELETE FROM team_game_stats WHERE game_id IN (SELECT id FROM games WHERE game_type = ?)`).run('PRE');
+    db.prepare('DELETE FROM games WHERE game_type = ?').run('PRE');
+  })();
 
   let count = 0;
-  for (const season of targetSeasons) {
-    for (let week = 1; week <= 4; week++) {
-      try {
-        const url = `http://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=1&dates=${season}&week=${week}`;
-        const response = await axios.get(url);
-        const events = response.data.events || [];
-        
-        db.transaction(() => {
-          for (const event of events) {
-            const comp = event.competitions[0];
-            if (!comp) continue;
-            
-            const homeCompetitor = comp.competitors.find((c: any) => c.homeAway === 'home');
-            const awayCompetitor = comp.competitors.find((c: any) => c.homeAway === 'away');
-            if (!homeCompetitor || !awayCompetitor) continue;
-            
-            let homeTeam = homeCompetitor.team.abbreviation;
-            let awayTeam = awayCompetitor.team.abbreviation;
-            
-            homeTeam = espnToNflverse[homeTeam] || homeTeam;
-            awayTeam = espnToNflverse[awayTeam] || awayTeam;
+  db.transaction(() => {
+    for (const row of rows) {
+      const season = nullableInteger(row.season);
+      const gameType = nullableText(row.game_type) || 'REG';
 
-            const isCompleted = event.status.type.completed;
-            const homeScore = isCompleted ? parseInt(homeCompetitor.score) : null;
-            const awayScore = isCompleted ? parseInt(awayCompetitor.score) : null;
-
-            const gameId = `${season}_00_${awayTeam}_${homeTeam}_PRE_${week}`;
-
-            insertGame.run(
-              gameId,
-              parseInt(season),
-              'PRE',
-              week,
-              event.date,
-              homeTeam,
-              awayTeam,
-              homeScore !== null && !isNaN(homeScore) ? homeScore : null,
-              awayScore !== null && !isNaN(awayScore) ? awayScore : null,
-              isCompleted ? 1 : 0
-            );
-            count++;
-          }
-        })();
-      } catch (e: any) {
-        console.log(`Failed to fetch preseason for ${season} week ${week}: ${e.message}`);
+      if (season == null || season < HISTORY_START_YEAR || season > latestSeason || gameType === 'PRE') {
+        continue;
       }
+
+      const isCompleted = row.home_score !== '' && row.away_score !== '' && row.home_score != null;
+      const gameId = row.game_id || `${row.season}_${row.week}_${row.away_team}_${row.home_team}`;
+
+      insertGame.run(
+        gameId,
+        season,
+        gameType,
+        nullableInteger(row.week) || 0,
+        nullableText(row.gameday) || '',
+        nullableText(row.weekday),
+        nullableText(row.gametime),
+        row.home_team,
+        row.away_team,
+        isCompleted ? nullableInteger(row.home_score) : null,
+        isCompleted ? nullableInteger(row.away_score) : null,
+        isCompleted ? 1 : 0,
+        nullableText(row.location),
+        nullableText(row.stadium),
+        nullableText(row.roof),
+        nullableText(row.surface),
+        nullableNumber(row.temp),
+        nullableNumber(row.wind),
+        nullableInteger(row.away_rest),
+        nullableInteger(row.home_rest),
+        nullableInteger(row.away_moneyline),
+        nullableInteger(row.home_moneyline),
+        nullableNumber(row.spread_line),
+        nullableNumber(row.total_line),
+        nullableInteger(row.div_game),
+        nullableText(row.away_qb_name),
+        nullableText(row.home_qb_name),
+        nullableText(row.away_coach),
+        nullableText(row.home_coach)
+      );
+      count++;
     }
-  }
-  console.log(`Preseason games inserted successfully. Count: ${count}`);
+  })();
+
+  console.log(`Games inserted successfully. Count: ${count}`);
 }
 
 async function run() {
   try {
     await fetchTeams();
     await fetchGames();
-    await fetchPreseasonGames();
     console.log('Data ingestion complete.');
   } catch (error) {
     console.error('Error during data ingestion:', error);
+    process.exitCode = 1;
   }
 }
 

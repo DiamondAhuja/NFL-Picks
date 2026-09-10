@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, Shield, Activity, Info } from 'lucide-react';
+import { ArrowLeft, TrendingUp, Shield, Activity, Info, CalendarDays, CloudSun, MapPin, Users } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
 export default function GameDetails() {
@@ -20,11 +20,29 @@ export default function GameDetails() {
   if (loading) return <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nfl-blue"></div></div>;
   if (!game) return <div>Game not found</div>;
 
-  const explanations = game.explanation_json ? JSON.parse(game.explanation_json) : [];
+  const explanations = (() => {
+    try {
+      return game.explanation_json ? JSON.parse(game.explanation_json) : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const awayProb = Number(game.away_win_prob ?? 0.5);
+  const homeProb = Number(game.home_win_prob ?? 0.5);
+  const formatPercent = (value: number | null | undefined) => value == null ? 'N/A' : (Number(value) * 100).toFixed(1) + '%';
+  const formatNumber = (value: number | null | undefined, digits = 1) => value == null ? 'N/A' : Number(value).toFixed(digits);
+  const kickoff = [game.weekday, game.game_date, game.gametime].filter(Boolean).join(' ');
+  const roofSurface = [game.roof, game.surface].filter(Boolean).join(' / ');
+  const weather = [game.temp != null ? `${game.temp}F` : null, game.wind != null ? `${game.wind} mph wind` : null].filter(Boolean).join(', ');
+  const marketLine = [
+    game.spread_line != null ? `Spread ${Number(game.spread_line).toFixed(1)}` : null,
+    game.total_line != null ? `Total ${Number(game.total_line).toFixed(1)}` : null
+  ].filter(Boolean).join(' | ');
 
   const chartData = [
-    { name: 'Win Prob', value: (game.away_win_prob * 100), team: game.away_team, fill: '#D50A0A' },
-    { name: 'Win Prob', value: (game.home_win_prob * 100), team: game.home_team, fill: '#013369' }
+    { name: 'Win Prob', value: awayProb * 100, team: game.away_team, fill: '#D50A0A' },
+    { name: 'Win Prob', value: homeProb * 100, team: game.home_team, fill: '#013369' }
   ];
 
   return (
@@ -33,11 +51,11 @@ export default function GameDetails() {
         <ArrowLeft className="w-4 h-4 mr-1" /> Back to Dashboard
       </Link>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
         <div className="bg-gradient-to-r from-gray-900 to-nfl-blue p-8 text-white">
           <div className="text-center mb-8">
             <h2 className="text-sm font-bold tracking-widest text-gray-300 uppercase">Week {game.week} Matchup</h2>
-            <p className="text-gray-400 mt-1">{game.game_date}</p>
+            <p className="text-gray-400 mt-1">{kickoff || game.game_date}</p>
           </div>
           
           <div className="flex justify-between items-center px-4 md:px-12">
@@ -48,7 +66,7 @@ export default function GameDetails() {
             </div>
             
             <div className="text-center w-1/3">
-              <div className="text-5xl font-black mb-2">{game.predicted_away_score} - {game.predicted_home_score}</div>
+              <div className="text-5xl font-black mb-2">{game.predicted_away_score ?? '-'} - {game.predicted_home_score ?? '-'}</div>
               <div className="inline-block bg-white/20 px-3 py-1 rounded-full text-sm font-medium backdrop-blur-sm">
                 Predicted Score
               </div>
@@ -63,6 +81,31 @@ export default function GameDetails() {
         </div>
 
         <div className="p-8">
+          <div className="grid md:grid-cols-4 gap-4 mb-10">
+            <div className="bg-gray-50 border border-gray-100 rounded-lg p-4">
+              <CalendarDays className="w-5 h-5 text-nfl-blue mb-2" />
+              <div className="text-xs font-bold uppercase text-gray-500">Kickoff</div>
+              <div className="font-semibold text-gray-900">{kickoff || 'TBD'}</div>
+            </div>
+            <div className="bg-gray-50 border border-gray-100 rounded-lg p-4">
+              <MapPin className="w-5 h-5 text-nfl-blue mb-2" />
+              <div className="text-xs font-bold uppercase text-gray-500">Venue</div>
+              <div className="font-semibold text-gray-900">{game.stadium || 'TBD'}</div>
+              {roofSurface && <div className="text-sm text-gray-500">{roofSurface}</div>}
+            </div>
+            <div className="bg-gray-50 border border-gray-100 rounded-lg p-4">
+              <CloudSun className="w-5 h-5 text-nfl-blue mb-2" />
+              <div className="text-xs font-bold uppercase text-gray-500">Weather</div>
+              <div className="font-semibold text-gray-900">{weather || 'Indoor/TBD'}</div>
+            </div>
+            <div className="bg-gray-50 border border-gray-100 rounded-lg p-4">
+              <Users className="w-5 h-5 text-nfl-blue mb-2" />
+              <div className="text-xs font-bold uppercase text-gray-500">Market</div>
+              <div className="font-semibold text-gray-900">{marketLine || 'No line yet'}</div>
+              {game.div_game ? <div className="text-sm text-gray-500">Division game</div> : null}
+            </div>
+          </div>
+
           <div className="grid md:grid-cols-2 gap-12">
             
             <div>
@@ -82,8 +125,8 @@ export default function GameDetails() {
                 </ResponsiveContainer>
               </div>
               <div className="flex justify-between items-center text-sm font-medium text-gray-500 mt-2">
-                <span>{game.away_team}: {(game.away_win_prob * 100).toFixed(1)}%</span>
-                <span>{game.home_team}: {(game.home_win_prob * 100).toFixed(1)}%</span>
+                <span>{game.away_team}: {formatPercent(game.away_win_prob)}</span>
+                <span>{game.home_team}: {formatPercent(game.home_win_prob)}</span>
               </div>
             </div>
 
@@ -111,8 +154,8 @@ export default function GameDetails() {
       </div>
 
       {/* Team Comparison Table */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden p-8">
-         <h3 className="text-xl font-bold mb-6">Team Comparison (Rolling Averages)</h3>
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden p-8">
+         <h3 className="text-xl font-bold mb-6">Team Comparison</h3>
          <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b-2 border-gray-100">
@@ -124,18 +167,43 @@ export default function GameDetails() {
             <tbody>
               <tr className="border-b border-gray-50 hover:bg-gray-50">
                 <td className="py-3 px-4 flex items-center"><TrendingUp className="w-4 h-4 mr-2 text-gray-400" /> Points / Game</td>
-                <td className="py-3 px-4">{Number(game.away_pts).toFixed(1)}</td>
-                <td className="py-3 px-4">{Number(game.home_pts).toFixed(1)}</td>
+                <td className="py-3 px-4">{formatNumber(game.away_pts)}</td>
+                <td className="py-3 px-4">{formatNumber(game.home_pts)}</td>
               </tr>
               <tr className="border-b border-gray-50 hover:bg-gray-50">
                 <td className="py-3 px-4 flex items-center"><Shield className="w-4 h-4 mr-2 text-gray-400" /> Points Allowed</td>
-                <td className="py-3 px-4">{Number(game.away_allow).toFixed(1)}</td>
-                <td className="py-3 px-4">{Number(game.home_allow).toFixed(1)}</td>
+                <td className="py-3 px-4">{formatNumber(game.away_allow)}</td>
+                <td className="py-3 px-4">{formatNumber(game.home_allow)}</td>
               </tr>
-              <tr className="hover:bg-gray-50">
+              <tr className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="py-3 px-4 flex items-center"><Activity className="w-4 h-4 mr-2 text-gray-400" /> Rolling Margin</td>
+                <td className="py-3 px-4">{formatNumber(game.away_margin)}</td>
+                <td className="py-3 px-4">{formatNumber(game.home_margin)}</td>
+              </tr>
+              <tr className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="py-3 px-4 flex items-center"><Activity className="w-4 h-4 mr-2 text-gray-400" /> Elo Rating</td>
+                <td className="py-3 px-4">{formatNumber(game.away_elo, 0)}</td>
+                <td className="py-3 px-4">{formatNumber(game.home_elo, 0)}</td>
+              </tr>
+              <tr className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="py-3 px-4 flex items-center"><TrendingUp className="w-4 h-4 mr-2 text-gray-400" /> Season Win Rate</td>
+                <td className="py-3 px-4">{formatPercent(game.away_win_pct)}</td>
+                <td className="py-3 px-4">{formatPercent(game.home_win_pct)}</td>
+              </tr>
+              <tr className="border-b border-gray-50 hover:bg-gray-50">
                 <td className="py-3 px-4 flex items-center"><Activity className="w-4 h-4 mr-2 text-gray-400" /> Win Streak</td>
                 <td className="py-3 px-4">{game.away_streak}</td>
                 <td className="py-3 px-4">{game.home_streak}</td>
+              </tr>
+              <tr className="border-b border-gray-50 hover:bg-gray-50">
+                <td className="py-3 px-4 flex items-center"><CalendarDays className="w-4 h-4 mr-2 text-gray-400" /> Rest Days</td>
+                <td className="py-3 px-4">{game.away_rest_feature ?? game.away_rest ?? 'N/A'}</td>
+                <td className="py-3 px-4">{game.home_rest_feature ?? game.home_rest ?? 'N/A'}</td>
+              </tr>
+              <tr className="hover:bg-gray-50">
+                <td className="py-3 px-4 flex items-center"><Users className="w-4 h-4 mr-2 text-gray-400" /> QB / Coach</td>
+                <td className="py-3 px-4">{[game.away_qb_name, game.away_coach].filter(Boolean).join(' / ') || 'N/A'}</td>
+                <td className="py-3 px-4">{[game.home_qb_name, game.home_coach].filter(Boolean).join(' / ') || 'N/A'}</td>
               </tr>
             </tbody>
          </table>
