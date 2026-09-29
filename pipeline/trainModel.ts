@@ -41,6 +41,10 @@ type GameRow = {
   away_rest: number;
   away_win_pct: number;
   away_margin: number;
+  home_qb_elo: number;
+  away_qb_elo: number;
+  home_injury_impact: number;
+  away_injury_impact: number;
 };
 
 class RegularizedLogisticRegression {
@@ -124,6 +128,8 @@ function marketHomeProbability(row: GameRow) {
 
 const featureNames = [
   'Elo rating edge',
+  'QB Elo edge',
+  'Injury impact edge',
   'Recent scoring edge',
   'Recent defensive edge',
   'Recent point margin edge',
@@ -141,6 +147,8 @@ function extractFeatures(row: GameRow) {
 
   return [
     num(row.home_elo, 1500) - num(row.away_elo, 1500),
+    num(row.home_qb_elo, 1500) - num(row.away_qb_elo, 1500),
+    num(row.away_injury_impact) - num(row.home_injury_impact),
     num(row.home_pts, 21) - num(row.away_pts, 21),
     num(row.away_allow, 21) - num(row.home_allow, 21),
     num(row.home_margin) - num(row.away_margin),
@@ -156,6 +164,7 @@ function extractFeatures(row: GameRow) {
 
 function recencyWeight(row: GameRow, latestSeason: number) {
   const age = Math.max(0, latestSeason - row.season);
+  if (age === 0) return 4.0; // 4x weight for current season
   return Math.pow(0.78, age);
 }
 
@@ -226,11 +235,11 @@ export function trainAndPredict() {
     SELECT g.id, g.season, g.week, g.game_date, g.home_team_id, g.away_team_id,
            g.home_score, g.away_score, g.completed, g.game_type, g.spread_line,
            g.total_line, g.home_moneyline, g.away_moneyline, g.div_game,
-           fh.elo_rating as home_elo, fh.rolling_points_scored as home_pts,
+           fh.elo_rating as home_elo, fh.qb_elo as home_qb_elo, fh.injury_impact as home_injury_impact, fh.rolling_points_scored as home_pts,
            fh.rolling_points_allowed as home_allow, fh.win_streak as home_streak,
            fh.rest_days as home_rest, fh.season_win_pct as home_win_pct,
            fh.rolling_point_margin as home_margin,
-           fa.elo_rating as away_elo, fa.rolling_points_scored as away_pts,
+           fa.elo_rating as away_elo, fa.qb_elo as away_qb_elo, fa.injury_impact as away_injury_impact, fa.rolling_points_scored as away_pts,
            fa.rolling_points_allowed as away_allow, fa.win_streak as away_streak,
            fa.rest_days as away_rest, fa.season_win_pct as away_win_pct,
            fa.rolling_point_margin as away_margin
@@ -293,9 +302,40 @@ export function trainAndPredict() {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
+  const existingPredictionsRows = db.prepare(`
+    SELECT p.* FROM predictions p
+    JOIN (
+      SELECT game_id, MAX(model_version_id) as max_ver 
+      FROM predictions GROUP BY game_id
+    ) max_p ON p.game_id = max_p.game_id AND p.model_version_id = max_p.max_ver
+  `).all() as any[];
+  
+  const existingMap = new Map<string, any>();
+  for (const ep of existingPredictionsRows) {
+    existingMap.set(ep.game_id, ep);
+  }
+
   let count = 0;
   db.transaction(() => {
     for (const row of predictData) {
+      if (row.completed && existingMap.has(row.id)) {
+        const oldP = existingMap.get(row.id);
+        insertPred.run(
+          row.id,
+          modelId,
+          oldP.timestamp,
+          oldP.home_win_prob,
+          oldP.away_win_prob,
+          oldP.predicted_home_score,
+          oldP.predicted_away_score,
+          oldP.confidence_level,
+          oldP.explanation_json,
+          oldP.is_correct
+        );
+        count++;
+        continue;
+      }
+
       const x = extractFeatures(row);
       const modelProb = finalFit.model.predictProb(x, finalFit.normParams);
       const marketProb = marketHomeProbability(row);

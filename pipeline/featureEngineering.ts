@@ -21,15 +21,15 @@ export function runFeatureEngineering() {
   const insertFeature = db.prepare(`
     INSERT INTO features (
       game_id, team_id, is_home, rolling_points_scored, rolling_points_allowed,
-      rolling_offensive_yards, rolling_turnovers, win_streak, elo_rating,
-      rest_days, season_win_pct, rolling_point_margin
+      rolling_offensive_yards, rolling_turnovers, win_streak, elo_rating, qb_elo,
+      injury_impact, rest_days, season_win_pct, rolling_point_margin
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const games = db.prepare(`
     SELECT id, season, week, game_type, game_date, home_team_id, away_team_id,
-           home_score, away_score, completed, home_rest, away_rest
+           home_score, away_score, completed, home_rest, away_rest, home_qb_name, away_qb_name
     FROM games 
     WHERE game_type != 'PRE'
     ORDER BY season ASC, game_date ASC, week ASC
@@ -37,6 +37,7 @@ export function runFeatureEngineering() {
 
   // State trackers
   const teamElo: Record<string, number> = {};
+  const qbElo: Record<string, number> = {};
   const teamHistory: Record<string, { pointsFor: number, pointsAgainst: number, won: boolean }[]> = {};
   const seasonRecords: Record<string, { wins: number, losses: number, ties: number }> = {};
   let currentSeason: number | null = null;
@@ -81,13 +82,35 @@ export function runFeatureEngineering() {
     if (!seasonRecords[teamId]) seasonRecords[teamId] = { wins: 0, losses: 0, ties: 0 };
   };
 
+  const ensureQb = (qbName: string | null) => {
+    if (qbName && !qbElo[qbName]) qbElo[qbName] = 1500;
+  };
+
   let count = 0;
+
+  const getInjuredPlayers = db.prepare(`
+    SELECT gsis_id, position FROM injuries 
+    WHERE team = ? AND season = ? AND week = ? 
+    AND report_status IN ('Out', 'Doubtful')
+  `);
+
+  const getPlayerImpact = db.prepare(`
+    SELECT AVG(fantasy_points) as avg_pts FROM (
+      SELECT fantasy_points FROM player_stats 
+      WHERE gsis_id = ? AND (season < ? OR (season = ? AND week < ?))
+      ORDER BY season DESC, week DESC
+      LIMIT 10
+    )
+  `);
 
   db.transaction(() => {
     for (const game of games as any[]) {
       if (currentSeason !== game.season) {
         for (const teamId of Object.keys(teamElo)) {
           teamElo[teamId] = 1500 + (teamElo[teamId] - 1500) * (1 - OFFSEASON_REGRESSION);
+        }
+        for (const qbName of Object.keys(qbElo)) {
+          qbElo[qbName] = 1500 + (qbElo[qbName] - 1500) * (1 - OFFSEASON_REGRESSION);
         }
         for (const teamId of Object.keys(seasonRecords)) {
           seasonRecords[teamId] = { wins: 0, losses: 0, ties: 0 };
@@ -97,9 +120,29 @@ export function runFeatureEngineering() {
 
       const homeId = game.home_team_id;
       const awayId = game.away_team_id;
+      const homeQb = game.home_qb_name || 'Unknown';
+      const awayQb = game.away_qb_name || 'Unknown';
+
+      const calcInjuryImpact = (teamId: string) => {
+        const injured = getInjuredPlayers.all(teamId, game.season, game.week) as any[];
+        let totalImpact = 0;
+        for (const p of injured) {
+          const impactRow = getPlayerImpact.get(p.gsis_id, game.season, game.season, game.week) as any;
+          const pts = impactRow && impactRow.avg_pts != null ? impactRow.avg_pts : 0;
+          if (pts > 2) { // only count if they actually score fantasy points
+            totalImpact += (p.position === 'QB' ? pts * 2 : pts);
+          }
+        }
+        return totalImpact;
+      };
+
+      const homeInjuryImpact = calcInjuryImpact(homeId);
+      const awayInjuryImpact = calcInjuryImpact(awayId);
 
       ensureTeam(homeId);
       ensureTeam(awayId);
+      ensureQb(homeQb);
+      ensureQb(awayQb);
 
       // Calculate pre-game features
       const homeElo = teamElo[homeId] + HOME_ADVANTAGE;
@@ -107,8 +150,8 @@ export function runFeatureEngineering() {
 
       // Insert pre-game features (only for games that have valid teams, some might be empty if bad data)
       if (homeId && awayId) {
-        insertFeature.run(game.id, homeId, 1, getRollingAvg(homeId, 'pointsFor'), getRollingAvg(homeId, 'pointsAgainst'), 350, 1.5, getWinStreak(homeId), teamElo[homeId], game.home_rest ?? 7, getSeasonWinPct(homeId), getRollingMargin(homeId));
-        insertFeature.run(game.id, awayId, 0, getRollingAvg(awayId, 'pointsFor'), getRollingAvg(awayId, 'pointsAgainst'), 350, 1.5, getWinStreak(awayId), teamElo[awayId], game.away_rest ?? 7, getSeasonWinPct(awayId), getRollingMargin(awayId));
+        insertFeature.run(game.id, homeId, 1, getRollingAvg(homeId, 'pointsFor'), getRollingAvg(homeId, 'pointsAgainst'), 350, 1.5, getWinStreak(homeId), teamElo[homeId], qbElo[homeQb], homeInjuryImpact, game.home_rest ?? 7, getSeasonWinPct(homeId), getRollingMargin(homeId));
+        insertFeature.run(game.id, awayId, 0, getRollingAvg(awayId, 'pointsFor'), getRollingAvg(awayId, 'pointsAgainst'), 350, 1.5, getWinStreak(awayId), teamElo[awayId], qbElo[awayQb], awayInjuryImpact, game.away_rest ?? 7, getSeasonWinPct(awayId), getRollingMargin(awayId));
         count += 2;
       }
 
@@ -123,13 +166,18 @@ export function runFeatureEngineering() {
 
         const expectedHome = expectedResult(homeElo, awayElo);
         const expectedAway = expectedResult(awayElo, homeElo);
+        const expectedHomeQb = expectedResult(qbElo[homeQb] + HOME_ADVANTAGE, qbElo[awayQb]);
+        const expectedAwayQb = expectedResult(qbElo[awayQb], qbElo[homeQb] + HOME_ADVANTAGE);
 
         // Margin of victory multiplier
         const mov = Math.abs(game.home_score - game.away_score);
         const movMultiplier = Math.log(mov + 1) * (2.2 / ((homeElo - awayElo) * 0.001 + 2.2));
+        const qbMovMultiplier = Math.log(mov + 1) * (2.2 / ((qbElo[homeQb] - qbElo[awayQb]) * 0.001 + 2.2));
 
         teamElo[homeId] = teamElo[homeId] + ELO_K * movMultiplier * (homeResult - expectedHome);
         teamElo[awayId] = teamElo[awayId] + ELO_K * movMultiplier * (awayResult - expectedAway);
+        qbElo[homeQb] = qbElo[homeQb] + ELO_K * qbMovMultiplier * (homeResult - expectedHomeQb);
+        qbElo[awayQb] = qbElo[awayQb] + ELO_K * qbMovMultiplier * (awayResult - expectedAwayQb);
 
         teamHistory[homeId].push({ pointsFor: game.home_score, pointsAgainst: game.away_score, won: homeWon });
         teamHistory[awayId].push({ pointsFor: game.away_score, pointsAgainst: game.home_score, won: awayWon });

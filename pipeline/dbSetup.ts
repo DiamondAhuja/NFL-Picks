@@ -70,6 +70,28 @@ db.exec(`
     FOREIGN KEY (team_id) REFERENCES teams (id)
   );
 
+  -- Player Stats table
+  CREATE TABLE IF NOT EXISTS player_stats (
+    gsis_id TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    week INTEGER NOT NULL,
+    team TEXT NOT NULL,
+    position TEXT,
+    fantasy_points REAL,
+    PRIMARY KEY (gsis_id, season, week)
+  );
+
+  -- Injuries table
+  CREATE TABLE IF NOT EXISTS injuries (
+    gsis_id TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    week INTEGER NOT NULL,
+    team TEXT NOT NULL,
+    report_status TEXT,
+    position TEXT,
+    PRIMARY KEY (gsis_id, season, week)
+  );
+
   -- Features table (pre-game state for prediction)
   CREATE TABLE IF NOT EXISTS features (
     game_id TEXT NOT NULL,
@@ -81,6 +103,8 @@ db.exec(`
     rolling_turnovers REAL,
     win_streak INTEGER,
     elo_rating REAL,
+    qb_elo REAL,
+    injury_impact REAL,
     rest_days REAL,
     season_win_pct REAL,
     rolling_point_margin REAL,

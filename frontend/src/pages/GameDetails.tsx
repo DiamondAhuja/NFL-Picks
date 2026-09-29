@@ -37,7 +37,8 @@ export default function GameDetails() {
   const weather = [game.temp != null ? `${game.temp}F` : null, game.wind != null ? `${game.wind} mph wind` : null].filter(Boolean).join(', ');
   const marketLine = [
     game.spread_line != null ? `Spread ${Number(game.spread_line).toFixed(1)}` : null,
-    game.total_line != null ? `Total ${Number(game.total_line).toFixed(1)}` : null
+    game.total_line != null ? `Total ${Number(game.total_line).toFixed(1)}` : null,
+    game.home_moneyline != null ? `Odds: ${game.away_team} ${game.away_moneyline > 0 ? '+' : ''}${game.away_moneyline} | ${game.home_team} ${game.home_moneyline > 0 ? '+' : ''}${game.home_moneyline}` : null
   ].filter(Boolean).join(' | ');
 
   const chartData = [
@@ -62,7 +63,8 @@ export default function GameDetails() {
             <div className="text-center w-1/3">
               <img src={game.away_logo || 'https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nfl.png'} alt={game.away_team} className="w-24 h-24 mx-auto mb-4 object-contain bg-white rounded-full p-2" />
               <h2 className="text-2xl font-bold">{game.away_team}</h2>
-              <p className="text-gray-300">Away</p>
+              {game.away_record && <p className="text-sm text-gray-300 font-medium mb-1">{game.away_record}</p>}
+              <p className="text-gray-400 text-sm">Away</p>
             </div>
             
             <div className="text-center w-1/3">
@@ -75,7 +77,8 @@ export default function GameDetails() {
             <div className="text-center w-1/3">
               <img src={game.home_logo || 'https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nfl.png'} alt={game.home_team} className="w-24 h-24 mx-auto mb-4 object-contain bg-white rounded-full p-2" />
               <h2 className="text-2xl font-bold">{game.home_team}</h2>
-              <p className="text-gray-300">Home</p>
+              {game.home_record && <p className="text-sm text-gray-300 font-medium mb-1">{game.home_record}</p>}
+              <p className="text-gray-400 text-sm">Home</p>
             </div>
           </div>
         </div>

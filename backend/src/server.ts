@@ -18,6 +18,15 @@ app.get('/api/games/upcoming', (req, res) => {
            g.weekday, g.gametime, g.location, g.stadium, g.roof, g.surface,
            g.temp, g.wind, g.away_rest, g.home_rest, g.spread_line,
            g.total_line, g.div_game, g.away_qb_name, g.home_qb_name,
+           g.home_moneyline, g.away_moneyline,
+           (SELECT COUNT(CASE WHEN (home_team_id = ht.id AND home_score > away_score) OR (away_team_id = ht.id AND away_score > home_score) THEN 1 END) || '-' ||
+                   COUNT(CASE WHEN (home_team_id = ht.id AND home_score < away_score) OR (away_team_id = ht.id AND away_score < home_score) THEN 1 END) ||
+                   CASE WHEN COUNT(CASE WHEN home_score = away_score THEN 1 END) > 0 THEN '-' || COUNT(CASE WHEN home_score = away_score THEN 1 END) ELSE '' END
+            FROM games WHERE season = g.season AND completed = 1 AND game_type = 'REG' AND (home_team_id = ht.id OR away_team_id = ht.id)) as home_record,
+           (SELECT COUNT(CASE WHEN (home_team_id = at.id AND home_score > away_score) OR (away_team_id = at.id AND away_score > home_score) THEN 1 END) || '-' ||
+                   COUNT(CASE WHEN (home_team_id = at.id AND home_score < away_score) OR (away_team_id = at.id AND away_score < home_score) THEN 1 END) ||
+                   CASE WHEN COUNT(CASE WHEN home_score = away_score THEN 1 END) > 0 THEN '-' || COUNT(CASE WHEN home_score = away_score THEN 1 END) ELSE '' END
+            FROM games WHERE season = g.season AND completed = 1 AND game_type = 'REG' AND (home_team_id = at.id OR away_team_id = at.id)) as away_record,
            ht.name as home_team, ht.logo_url as home_logo, ht.id as home_team_id,
            at.name as away_team, at.logo_url as away_logo, at.id as away_team_id,
            p.home_win_prob, p.away_win_prob, p.predicted_home_score, p.predicted_away_score, p.confidence_level
@@ -37,7 +46,8 @@ app.get('/api/games/upcoming', (req, res) => {
 
 // Past games results and predictions
 app.get('/api/games/past', (req, res) => {
-  const games = db.prepare(`
+  const { season, week } = req.query;
+  let query = `
     SELECT g.id, g.season, g.week, g.game_type, g.game_date, g.home_score, g.away_score,
            g.weekday, g.gametime, g.stadium, g.roof, g.surface,
            ht.name as home_team, ht.logo_url as home_logo,
@@ -51,10 +61,41 @@ app.get('/api/games/past', (req, res) => {
       WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
     ) p ON g.id = p.game_id
     WHERE g.completed = 1 AND g.game_type != 'PRE'
-    ORDER BY g.season DESC, g.game_date DESC
-    LIMIT 100
-  `).all();
+  `;
+  
+  const params: any[] = [];
+  if (season) {
+    query += ` AND g.season = ?`;
+    params.push(season);
+  }
+  if (week) {
+    query += ` AND g.week = ?`;
+    params.push(week);
+  }
+  
+  query += ` ORDER BY g.season DESC, g.week DESC, g.game_date DESC LIMIT 200`;
+  const games = db.prepare(query).all(...params);
   res.json(games);
+});
+
+// Weekly Performance
+app.get('/api/performance/weekly', (req, res) => {
+  const performance = db.prepare(`
+    SELECT g.season, g.week, 
+           COUNT(*) as total_games,
+           SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) as correct_picks,
+           SUM(CASE WHEN p.is_correct = 0 THEN 1 ELSE 0 END) as incorrect_picks
+    FROM games g
+    JOIN (
+      SELECT * FROM predictions 
+      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+    ) p ON g.id = p.game_id
+    WHERE g.completed = 1 AND g.game_type != 'PRE' AND p.is_correct IS NOT NULL
+    GROUP BY g.season, g.week
+    ORDER BY g.season DESC, g.week DESC
+    LIMIT 20
+  `).all();
+  res.json(performance);
 });
 
 // Specific game details
@@ -63,6 +104,14 @@ app.get('/api/games/:id', (req, res) => {
     SELECT g.*, 
            ht.name as home_team, ht.logo_url as home_logo,
            at.name as away_team, at.logo_url as away_logo,
+           (SELECT COUNT(CASE WHEN (home_team_id = ht.id AND home_score > away_score) OR (away_team_id = ht.id AND away_score > home_score) THEN 1 END) || '-' ||
+                   COUNT(CASE WHEN (home_team_id = ht.id AND home_score < away_score) OR (away_team_id = ht.id AND away_score < home_score) THEN 1 END) ||
+                   CASE WHEN COUNT(CASE WHEN home_score = away_score THEN 1 END) > 0 THEN '-' || COUNT(CASE WHEN home_score = away_score THEN 1 END) ELSE '' END
+            FROM games WHERE season = g.season AND completed = 1 AND game_type = 'REG' AND (home_team_id = ht.id OR away_team_id = ht.id)) as home_record,
+           (SELECT COUNT(CASE WHEN (home_team_id = at.id AND home_score > away_score) OR (away_team_id = at.id AND away_score > home_score) THEN 1 END) || '-' ||
+                   COUNT(CASE WHEN (home_team_id = at.id AND home_score < away_score) OR (away_team_id = at.id AND away_score < home_score) THEN 1 END) ||
+                   CASE WHEN COUNT(CASE WHEN home_score = away_score THEN 1 END) > 0 THEN '-' || COUNT(CASE WHEN home_score = away_score THEN 1 END) ELSE '' END
+            FROM games WHERE season = g.season AND completed = 1 AND game_type = 'REG' AND (home_team_id = at.id OR away_team_id = at.id)) as away_record,
            p.home_win_prob, p.away_win_prob, p.predicted_home_score, p.predicted_away_score, p.confidence_level, p.explanation_json,
            fh.win_streak as home_streak, fa.win_streak as away_streak,
            fh.rolling_points_scored as home_pts, fa.rolling_points_scored as away_pts,

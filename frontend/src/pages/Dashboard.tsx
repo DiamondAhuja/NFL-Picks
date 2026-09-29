@@ -5,23 +5,32 @@ import { CalendarDays, ChevronRight, CheckCircle, MapPin, XCircle } from 'lucide
 export default function Dashboard() {
   const [upcomingGames, setUpcomingGames] = useState<any[]>([]);
   const [pastGames, setPastGames] = useState<any[]>([]);
+  const [weeklyPerf, setWeeklyPerf] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
+  const [activeTab, setActiveTab] = useState<'upcoming' | 'past' | 'performance'>('upcoming');
+  const [selectedWeek, setSelectedWeek] = useState<{season: number, week: number} | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    let pastUrl = 'http://localhost:3001/api/games/past';
+    if (selectedWeek) {
+      pastUrl += `?season=${selectedWeek.season}&week=${selectedWeek.week}`;
+    }
+
     Promise.all([
       fetch('http://localhost:3001/api/games/upcoming').then(r => r.json()),
-      fetch('http://localhost:3001/api/games/past').then(r => r.json())
-    ]).then(([upcoming, past]) => {
+      fetch(pastUrl).then(r => r.json()),
+      fetch('http://localhost:3001/api/performance/weekly').then(r => r.json())
+    ]).then(([upcoming, past, perf]) => {
       setUpcomingGames(upcoming);
       setPastGames(past);
+      setWeeklyPerf(perf);
       setLoading(false);
     }).catch(e => {
       console.error(e);
       setLoading(false);
     });
-  }, []);
+  }, [selectedWeek]);
 
   if (loading) return <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nfl-blue"></div></div>;
 
@@ -42,6 +51,11 @@ export default function Dashboard() {
     return `${margin > 0 ? game.home_team : game.away_team} by ${Math.abs(margin)}`;
   };
 
+  const handleWeekClick = (season: number, week: number) => {
+    setSelectedWeek({ season, week });
+    setActiveTab('past');
+  };
+
   return (
     <div>
       <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center">
@@ -52,19 +66,64 @@ export default function Dashboard() {
         
         <div className="mt-4 md:mt-0 flex bg-gray-100 p-1 rounded-lg">
           <button 
-            onClick={() => setActiveTab('upcoming')}
+            onClick={() => { setActiveTab('upcoming'); setSelectedWeek(null); }}
             className={'px-4 py-2 text-sm font-medium rounded-md transition-colors ' + (activeTab === 'upcoming' ? 'bg-white shadow-sm text-nfl-blue' : 'text-gray-600 hover:text-gray-900')}
           >
             Upcoming
           </button>
           <button 
-            onClick={() => setActiveTab('past')}
+            onClick={() => setActiveTab('performance')}
+            className={'px-4 py-2 text-sm font-medium rounded-md transition-colors ' + (activeTab === 'performance' ? 'bg-white shadow-sm text-nfl-blue' : 'text-gray-600 hover:text-gray-900')}
+          >
+            Performance
+          </button>
+          <button 
+            onClick={() => { setActiveTab('past'); setSelectedWeek(null); }}
             className={'px-4 py-2 text-sm font-medium rounded-md transition-colors ' + (activeTab === 'past' ? 'bg-white shadow-sm text-nfl-blue' : 'text-gray-600 hover:text-gray-900')}
           >
-            Past Results
+            {selectedWeek ? `Week ${selectedWeek.week} Results` : 'Past Results'}
           </button>
         </div>
       </div>
+
+      {activeTab === 'performance' ? (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="py-4 px-6 font-semibold text-gray-600">Season</th>
+                <th className="py-4 px-6 font-semibold text-gray-600">Week</th>
+                <th className="py-4 px-6 font-semibold text-gray-600">Score (W-L)</th>
+                <th className="py-4 px-6 font-semibold text-gray-600">Accuracy</th>
+                <th className="py-4 px-6 font-semibold text-gray-600 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {weeklyPerf.map((perf, idx) => {
+                const accuracy = (perf.correct_picks / perf.total_games * 100).toFixed(1);
+                return (
+                  <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                    <td className="py-4 px-6 text-gray-900 font-medium">{perf.season}</td>
+                    <td className="py-4 px-6 text-gray-900">Week {perf.week}</td>
+                    <td className="py-4 px-6 font-bold text-gray-900">
+                      <span className="text-green-600">{perf.correct_picks}</span> - <span className="text-red-500">{perf.incorrect_picks}</span>
+                    </td>
+                    <td className="py-4 px-6 text-gray-600">{accuracy}%</td>
+                    <td className="py-4 px-6 text-right">
+                      <button 
+                        onClick={() => handleWeekClick(perf.season, perf.week)}
+                        className="text-nfl-blue font-medium text-sm hover:underline flex items-center justify-end w-full"
+                      >
+                        View Games <ChevronRight className="w-4 h-4 ml-1" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {gamesToDisplay.length === 0 && (
@@ -72,7 +131,7 @@ export default function Dashboard() {
         )}
         
         {gamesToDisplay.map(game => (
-          <Link key={game.id} to={'/game/' + game.id} className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group relative">
+          <Link key={game.id} to={'/game/' + game.id} className="flex flex-col bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group relative">
             
             {activeTab === 'past' && game.is_correct !== null && (
               <div className={'absolute top-0 right-0 px-3 py-1 text-xs font-bold rounded-bl-lg text-white ' + (game.is_correct ? 'bg-green-500' : 'bg-red-500')}>
@@ -80,7 +139,7 @@ export default function Dashboard() {
               </div>
             )}
 
-            <div className="p-6 pt-8">
+            <div className="p-6 pt-8 flex-1">
               <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center space-x-2">
                   <span className={'text-xs font-bold px-2 py-1 rounded ' + (game.game_type === 'REG' ? 'bg-gray-100 text-gray-800' : 'bg-orange-100 text-orange-800')}>
@@ -105,6 +164,9 @@ export default function Dashboard() {
                 <div className="text-center flex-1">
                   <img src={game.away_logo || 'https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nfl.png'} alt={game.away_team} className="w-16 h-16 mx-auto mb-2 object-contain" />
                   <div className="font-bold text-gray-900">{game.away_team}</div>
+                  {activeTab === 'upcoming' && game.away_record && (
+                    <div className="text-xs text-gray-400 mb-1">{game.away_record}</div>
+                  )}
                   
                   {activeTab === 'upcoming' ? (
                     <>
@@ -124,6 +186,9 @@ export default function Dashboard() {
                 <div className="text-center flex-1">
                   <img src={game.home_logo || 'https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/nfl.png'} alt={game.home_team} className="w-16 h-16 mx-auto mb-2 object-contain" />
                   <div className="font-bold text-gray-900">{game.home_team}</div>
+                  {activeTab === 'upcoming' && game.home_record && (
+                    <div className="text-xs text-gray-400 mb-1">{game.home_record}</div>
+                  )}
                   
                   {activeTab === 'upcoming' ? (
                     <>
@@ -153,6 +218,12 @@ export default function Dashboard() {
                 {activeTab === 'upcoming' && projectedMargin(game) && (
                   <div className="font-semibold text-gray-700">{projectedMargin(game)}</div>
                 )}
+                {activeTab === 'upcoming' && (game.home_moneyline || game.away_moneyline) && (
+                  <div className="mt-2 pt-2 border-t border-gray-100 flex justify-between text-xs font-medium text-gray-500">
+                    <div>Odds: {game.away_team} {game.away_moneyline > 0 ? '+' : ''}{game.away_moneyline}</div>
+                    <div>{game.home_team} {game.home_moneyline > 0 ? '+' : ''}{game.home_moneyline}</div>
+                  </div>
+                )}
               </div>
             </div>
             
@@ -163,6 +234,7 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
+      )}
     </div>
   );
 }

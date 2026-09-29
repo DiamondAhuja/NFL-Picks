@@ -176,10 +176,65 @@ async function fetchGames() {
   console.log(`Games inserted successfully. Count: ${count}`);
 }
 
+async function fetchPlayerStatsAndInjuries() {
+  console.log('Fetching player stats and injuries...');
+  const currentYear = new Date().getFullYear();
+  const latestSeason = currentYear + FUTURE_SEASONS_TO_KEEP;
+
+  const insertStat = db.prepare(`
+    INSERT OR REPLACE INTO player_stats (gsis_id, season, week, team, position, fantasy_points)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertInjury = db.prepare(`
+    INSERT OR REPLACE INTO injuries (gsis_id, season, week, team, report_status, position)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  for (let season = HISTORY_START_YEAR; season <= latestSeason; season++) {
+    console.log(`Fetching stats and injuries for ${season}...`);
+    let stats: any[] = [];
+    let injuries: any[] = [];
+
+    try {
+      stats = await fetchCsvRows(`https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats_${season}.csv`);
+    } catch (e) {
+      try {
+        stats = await fetchCsvRows(`https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${season}.csv`);
+      } catch (e2) {
+        console.log(`Could not fetch player stats for ${season}.`);
+      }
+    }
+
+    try {
+      injuries = await fetchCsvRows(`https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_${season}.csv`);
+    } catch (e) {
+      console.log(`Could not fetch injuries for ${season}.`);
+    }
+
+    if (stats.length > 0 || injuries.length > 0) {
+      db.transaction(() => {
+        for (const row of stats) {
+          if (row.player_id && (row.recent_team || row.team)) {
+            insertStat.run(row.player_id, season, nullableInteger(row.week) || 0, row.recent_team || row.team, row.position || '', nullableNumber(row.fantasy_points) || 0);
+          }
+        }
+        for (const row of injuries) {
+          if (row.gsis_id && row.team) {
+            insertInjury.run(row.gsis_id, season, nullableInteger(row.week) || 0, row.team, row.report_status || '', row.position || '');
+          }
+        }
+      })();
+    }
+  }
+  console.log('Player stats and injuries inserted successfully.');
+}
+
 async function run() {
   try {
     await fetchTeams();
     await fetchGames();
+    await fetchPlayerStatsAndInjuries();
     console.log('Data ingestion complete.');
   } catch (error) {
     console.error('Error during data ingestion:', error);

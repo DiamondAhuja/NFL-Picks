@@ -38,6 +38,7 @@ addColumn('games', 'home_coach', 'TEXT');
 addColumn('features', 'rest_days', 'REAL');
 addColumn('features', 'season_win_pct', 'REAL');
 addColumn('features', 'rolling_point_margin', 'REAL');
+addColumn('features', 'qb_elo', 'REAL');
 
 addColumn('predictions', 'is_correct', 'BOOLEAN');
 
