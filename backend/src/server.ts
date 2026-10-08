@@ -11,6 +11,32 @@ app.use(express.json());
 const dbPath = path.resolve(__dirname, '../../pipeline/database.sqlite');
 const db = new Database(dbPath, { readonly: true });
 
+const latestPredictionsSql = `
+  SELECT * FROM predictions 
+  WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+`;
+
+const predictionCorrectSql = `
+  CASE
+    WHEN p.game_id IS NULL OR g.home_score IS NULL OR g.away_score IS NULL OR g.home_score = g.away_score THEN NULL
+    WHEN p.home_win_prob IS NOT NULL THEN
+      CASE
+        WHEN (g.home_score > g.away_score AND p.home_win_prob >= 0.5)
+          OR (g.away_score > g.home_score AND p.home_win_prob < 0.5)
+        THEN 1 ELSE 0
+      END
+    WHEN p.predicted_home_score IS NOT NULL
+      AND p.predicted_away_score IS NOT NULL
+      AND p.predicted_home_score != p.predicted_away_score THEN
+      CASE
+        WHEN (g.home_score > g.away_score AND p.predicted_home_score > p.predicted_away_score)
+          OR (g.away_score > g.home_score AND p.predicted_away_score > p.predicted_home_score)
+        THEN 1 ELSE 0
+      END
+    ELSE NULL
+  END
+`;
+
 // Upcoming games with predictions
 app.get('/api/games/upcoming', (req, res) => {
   const games = db.prepare(`
@@ -34,8 +60,7 @@ app.get('/api/games/upcoming', (req, res) => {
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN (
-      SELECT * FROM predictions 
-      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+      ${latestPredictionsSql}
     ) p ON g.id = p.game_id
     WHERE g.completed = 0 AND g.game_type != 'PRE'
     ORDER BY g.season ASC, g.week ASC, g.game_date ASC
@@ -52,13 +77,13 @@ app.get('/api/games/past', (req, res) => {
            g.weekday, g.gametime, g.stadium, g.roof, g.surface,
            ht.name as home_team, ht.logo_url as home_logo,
            at.name as away_team, at.logo_url as away_logo,
-           p.predicted_home_score, p.predicted_away_score, p.is_correct
+           p.predicted_home_score, p.predicted_away_score,
+           ${predictionCorrectSql} as is_correct
     FROM games g
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN (
-      SELECT * FROM predictions 
-      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+      ${latestPredictionsSql}
     ) p ON g.id = p.game_id
     WHERE g.completed = 1 AND g.game_type != 'PRE'
   `;
@@ -81,18 +106,21 @@ app.get('/api/games/past', (req, res) => {
 // Weekly Performance
 app.get('/api/performance/weekly', (req, res) => {
   const performance = db.prepare(`
-    SELECT g.season, g.week, 
+    SELECT season, week,
            COUNT(*) as total_games,
-           SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) as correct_picks,
-           SUM(CASE WHEN p.is_correct = 0 THEN 1 ELSE 0 END) as incorrect_picks
-    FROM games g
-    JOIN (
-      SELECT * FROM predictions 
-      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
-    ) p ON g.id = p.game_id
-    WHERE g.completed = 1 AND g.game_type != 'PRE' AND p.is_correct IS NOT NULL
-    GROUP BY g.season, g.week
-    ORDER BY g.season DESC, g.week DESC
+           SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as correct_picks,
+           SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as incorrect_picks
+    FROM (
+      SELECT g.season, g.week, ${predictionCorrectSql} as is_correct
+      FROM games g
+      JOIN (
+        ${latestPredictionsSql}
+      ) p ON g.id = p.game_id
+      WHERE g.completed = 1 AND g.game_type != 'PRE'
+    ) scored
+    WHERE is_correct IS NOT NULL
+    GROUP BY season, week
+    ORDER BY season DESC, week DESC
     LIMIT 20
   `).all();
   res.json(performance);
@@ -124,8 +152,7 @@ app.get('/api/games/:id', (req, res) => {
     JOIN teams ht ON g.home_team_id = ht.id
     JOIN teams at ON g.away_team_id = at.id
     LEFT JOIN (
-      SELECT * FROM predictions 
-      WHERE model_version_id = (SELECT id FROM model_versions ORDER BY trained_at DESC LIMIT 1)
+      ${latestPredictionsSql}
     ) p ON g.id = p.game_id
     LEFT JOIN features fh ON g.id = fh.game_id AND fh.team_id = g.home_team_id
     LEFT JOIN features fa ON g.id = fa.game_id AND fa.team_id = g.away_team_id
@@ -141,7 +168,23 @@ app.get('/api/performance', (req, res) => {
   const model = db.prepare(`
     SELECT * FROM model_versions ORDER BY trained_at DESC LIMIT 1
   `).get();
-  res.json(model);
+
+  const totals = db.prepare(`
+    SELECT COUNT(*) as total_games,
+           SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as correct_picks,
+           SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as incorrect_picks
+    FROM (
+      SELECT ${predictionCorrectSql} as is_correct
+      FROM games g
+      JOIN (
+        ${latestPredictionsSql}
+      ) p ON g.id = p.game_id
+      WHERE g.completed = 1 AND g.game_type != 'PRE'
+    ) scored
+    WHERE is_correct IS NOT NULL
+  `).get();
+
+  res.json({ ...(model || {}), ...totals });
 });
 
 const PORT = process.env.PORT || 3001;

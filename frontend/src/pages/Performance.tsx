@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Target, AlertCircle, Percent, Activity } from 'lucide-react';
+import { Target, AlertCircle, Percent, Activity, CheckCircle, XCircle } from 'lucide-react';
 
 export default function Performance() {
   const [model, setModel] = useState<any>(null);
@@ -16,18 +16,36 @@ export default function Performance() {
 
   if (loading) return <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-nfl-blue"></div></div>;
 
+  const totalGames = Number(model?.total_games ?? 0);
+  const correctPicks = Number(model?.correct_picks ?? 0);
+  const incorrectPicks = Number(model?.incorrect_picks ?? 0);
+  const gradedAccuracy = totalGames > 0 ? ((correctPicks / totalGames) * 100).toFixed(1) : '0.0';
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Model Performance</h1>
-        <p className="text-gray-600">Chronological holdout results for the current regular season and playoff model.</p>
+        <p className="text-gray-600">Prediction results and chronological holdout metrics for the current regular season and playoff model.</p>
         <div className="mt-4 inline-flex items-center space-x-2 bg-blue-50 text-blue-800 px-4 py-2 rounded-full text-sm font-medium">
           <AlertCircle className="w-4 h-4" />
           <span>Active Model: {model?.version_string}</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-12">
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center">
+          <CheckCircle className="w-10 h-10 mx-auto text-green-500 mb-4" />
+          <div className="text-4xl font-black text-gray-900 mb-1">{correctPicks}</div>
+          <div className="text-sm font-medium text-gray-500 uppercase tracking-widest">Correct</div>
+        </div>
+
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center">
+          <XCircle className="w-10 h-10 mx-auto text-red-500 mb-4" />
+          <div className="text-4xl font-black text-gray-900 mb-1">{incorrectPicks}</div>
+          <div className="text-sm font-medium text-gray-500 uppercase tracking-widest">Incorrect</div>
+          <p className="text-xs text-gray-400 mt-2">{gradedAccuracy}% graded accuracy</p>
+        </div>
+
         <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center">
           <Target className="w-10 h-10 mx-auto text-green-500 mb-4" />
           <div className="text-4xl font-black text-gray-900 mb-1">{(model?.accuracy * 100).toFixed(1)}%</div>

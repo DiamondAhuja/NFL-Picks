@@ -188,6 +188,33 @@ function scorePredictions(actual: number[], probs: number[]) {
   };
 }
 
+function scoreCompletedPrediction(
+  row: GameRow,
+  homeWinProb: number | null | undefined,
+  predictedHomeScore: number | null | undefined,
+  predictedAwayScore: number | null | undefined
+) {
+  if (!row.completed || row.home_score === null || row.away_score === null || row.home_score === row.away_score) {
+    return null;
+  }
+
+  let predictedHomeWin: boolean | null = null;
+  if (typeof homeWinProb === 'number' && Number.isFinite(homeWinProb)) {
+    predictedHomeWin = homeWinProb >= 0.5;
+  } else if (
+    typeof predictedHomeScore === 'number' &&
+    typeof predictedAwayScore === 'number' &&
+    predictedHomeScore !== predictedAwayScore
+  ) {
+    predictedHomeWin = predictedHomeScore > predictedAwayScore;
+  }
+
+  if (predictedHomeWin === null) return null;
+
+  const homeWon = row.home_score > row.away_score;
+  return homeWon === predictedHomeWin ? 1 : 0;
+}
+
 function blendedProbability(modelProb: number, marketProb: number | null, marketWeight: number) {
   if (marketProb == null) return modelProb;
   return modelProb * (1 - marketWeight) + marketProb * marketWeight;
@@ -330,7 +357,7 @@ export function trainAndPredict() {
           oldP.predicted_away_score,
           oldP.confidence_level,
           oldP.explanation_json,
-          oldP.is_correct
+          scoreCompletedPrediction(row, oldP.home_win_prob, oldP.predicted_home_score, oldP.predicted_away_score)
         );
         count++;
         continue;
@@ -385,12 +412,7 @@ export function trainAndPredict() {
 
       explanations.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact));
 
-      let isCorrect = null;
-      if (row.completed && row.home_score !== null && row.away_score !== null && row.home_score !== row.away_score) {
-        const homeWon = row.home_score > row.away_score;
-        const predictedHomeWin = homeProb >= 0.5;
-        isCorrect = homeWon === predictedHomeWin ? 1 : 0;
-      }
+      const isCorrect = scoreCompletedPrediction(row, homeProb, homeScorePred, awayScorePred);
 
       insertPred.run(
         row.id,

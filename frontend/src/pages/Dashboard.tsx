@@ -130,12 +130,16 @@ export default function Dashboard() {
           <div className="col-span-full text-center text-gray-500 py-12">No games found for this category.</div>
         )}
         
-        {gamesToDisplay.map(game => (
+        {gamesToDisplay.map(game => {
+          const hasPredictionResult = game.is_correct === 0 || game.is_correct === 1 || game.is_correct === '0' || game.is_correct === '1';
+          const predictionCorrect = Number(game.is_correct) === 1;
+
+          return (
           <Link key={game.id} to={'/game/' + game.id} className="flex flex-col bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow group relative">
             
-            {activeTab === 'past' && game.is_correct !== null && (
-              <div className={'absolute top-0 right-0 px-3 py-1 text-xs font-bold rounded-bl-lg text-white ' + (game.is_correct ? 'bg-green-500' : 'bg-red-500')}>
-                {game.is_correct ? <span className="flex items-center"><CheckCircle className="w-3 h-3 mr-1"/> Correct</span> : <span className="flex items-center"><XCircle className="w-3 h-3 mr-1"/> Missed</span>}
+            {activeTab === 'past' && hasPredictionResult && (
+              <div className={'absolute top-0 right-0 px-3 py-1 text-xs font-bold rounded-bl-lg text-white ' + (predictionCorrect ? 'bg-green-500' : 'bg-red-500')}>
+                {predictionCorrect ? <span className="flex items-center"><CheckCircle className="w-3 h-3 mr-1"/> Correct</span> : <span className="flex items-center"><XCircle className="w-3 h-3 mr-1"/> Missed</span>}
               </div>
             )}
 
@@ -232,7 +236,8 @@ export default function Dashboard() {
               <ChevronRight className="w-4 h-4 text-nfl-blue" />
             </div>
           </Link>
-        ))}
+          );
+        })}
       </div>
       )}
     </div>
